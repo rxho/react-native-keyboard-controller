@@ -27,14 +27,22 @@ const AnimatedKeyboardBackgroundView = Animated.createAnimatedComponent(
  * ```
  */
 const KeyboardExtender = (props: PropsWithChildren<KeyboardExtenderProps>) => {
-  const { children, enabled = true } = props;
+  const { children, enabled = true, transparent = false } = props;
   const { progress } = useKeyboardAnimation();
+  // Android's predictive-back preview stays near 0.9 progress. Finish fading
+  // earlier to keep the extender opaque, allowing for pixel rounding.
+  const opacity = progress.interpolate({
+    inputRange: [0, 0.8],
+    outputRange: [0, 1],
+    extrapolate: "clamp",
+  });
+  const Container = transparent
+    ? Animated.View
+    : AnimatedKeyboardBackgroundView;
 
   return (
     <KeyboardStickyView enabled={enabled}>
-      <AnimatedKeyboardBackgroundView style={{ opacity: progress }}>
-        {children}
-      </AnimatedKeyboardBackgroundView>
+      <Container style={{ opacity }}>{children}</Container>
     </KeyboardStickyView>
   );
 };

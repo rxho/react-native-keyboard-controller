@@ -4,6 +4,7 @@ on:
     paths:
       - ".github/workflows/android-e2e-test.yml"
       - "package.json"
+      - "yarn.lock"
       - "android/**"
       - "example/**"
       - "e2e/**"
@@ -14,10 +15,15 @@ on:
     paths:
       - ".github/workflows/android-e2e-test.yml"
       - "package.json"
+      - "yarn.lock"
       - "android/**"
       - "example/**"
       - "e2e/**"
       - "src/**"
+
+concurrency:
+  group: android-e2e-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -25,9 +31,6 @@ jobs:
     runs-on: ubuntu-latest
     env:
       WORKING_DIRECTORY: example
-    concurrency:
-      group: android-e2e-${{ github.ref }}
-      cancel-in-progress: true
     steps:
       - uses: actions/checkout@v4
       - name: Free Disk Space (Ubuntu)
@@ -90,9 +93,6 @@ jobs:
     timeout-minutes: 90
     env:
       WORKING_DIRECTORY: example
-    concurrency:
-      group: android-e2e-${{ matrix.devices.api }}-${{ github.ref }}
-      cancel-in-progress: true
     strategy:
       matrix:
         devices:

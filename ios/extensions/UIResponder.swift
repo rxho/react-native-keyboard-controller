@@ -17,13 +17,9 @@ public extension UIResponder {
   }
 }
 
-public extension Optional where Wrapped == UIResponder {
+public extension Optional where Wrapped: UIResponder {
   var reactViewTag: NSNumber {
-    #if KEYBOARD_CONTROLLER_NEW_ARCH_ENABLED
-      return ((self as? UIView)?.superview?.tag ?? -1) as NSNumber
-    #else
-      return (self as? UIView)?.superview?.reactTag ?? -1
-    #endif
+    return ((self as? UIView)?.superview).reactNativeTag
   }
 
   var nativeID: String? {
@@ -38,17 +34,17 @@ public extension Optional where Wrapped == UIResponder {
 }
 
 public extension Optional where Wrapped: UIResponder {
-  var parentScrollViewTarget: NSNumber {
+  var parentScrollView: UIScrollView? {
     var currentResponder: UIResponder? = self
 
     while let currentView = currentResponder {
-      // If the current responder is a vertical, scrollable UIScrollView (excluding UITextView), return its tag
+      // If the current responder is a vertical, scrollable UIScrollView (excluding UITextView), return it
       if let scrollView = currentView as? UIScrollView,
          !(currentView is UITextView),
          scrollView.frame.width >= scrollView.contentSize.width,
          scrollView.isScrollEnabled
       {
-        return scrollView.reactViewTag
+        return scrollView
       }
 
       // Move to the next responder in the chain
@@ -56,7 +52,7 @@ public extension Optional where Wrapped: UIResponder {
     }
 
     // UIScrollView is not found
-    return -1
+    return nil
   }
 }
 
@@ -75,13 +71,17 @@ public extension UIResponder {
     DispatchQueue.main.async {
       defer { isKeyboardPreloading = false }
       guard let window = UIApplication.shared.activeWindow else { return }
+      // a field is already being edited (e.g. `autoFocus`), the dummy field would steal its focus
+      guard UIResponder.current == nil else { return }
 
       let lagFreeField = UITextField(frame: .zero)
       lagFreeField.isHidden = true
       window.addSubview(lagFreeField)
 
       lagFreeField.becomeFirstResponder()
-      lagFreeField.resignFirstResponder()
+      UIView.performWithoutAnimation {
+        lagFreeField.resignFirstResponder()
+      }
       lagFreeField.removeFromSuperview()
     }
   }

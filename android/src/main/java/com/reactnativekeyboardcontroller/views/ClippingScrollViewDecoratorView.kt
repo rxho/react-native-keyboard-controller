@@ -9,6 +9,7 @@ import androidx.core.widget.NestedScrollView
 import com.facebook.react.uimanager.ThemedReactContext
 import com.facebook.react.views.view.ReactViewGroup
 import com.reactnativekeyboardcontroller.extensions.px
+import com.reactnativekeyboardcontroller.extensions.syncContentInsetState
 import kotlin.math.max
 
 @SuppressLint("ViewConstructor")
@@ -19,6 +20,9 @@ class ClippingScrollViewDecoratorView(
   private var insetTop = 0.0
   private var appliedTopInsetPx = 0
   private var paddingScrollWorkaroundActive = false
+  private var expandedContentView: View? = null
+  private var contentBottomBeforeExpansion = 0
+  private var expansionTouchAction = MotionEvent.ACTION_CANCEL
 
   override fun onAttachedToWindow() {
     super.onAttachedToWindow()
@@ -35,13 +39,28 @@ class ClippingScrollViewDecoratorView(
 
     if (event.actionMasked == MotionEvent.ACTION_DOWN) {
       paddingScrollWorkaroundActive = shouldUsePaddingScrollWorkaround(scrollView, event)
+    } else if (scrollView.scrollY != 0) {
+      // Only expand the range to start the drag. Once scrolling begins, use the
+      // real content bounds so padding does not keep extending the drag range.
+      paddingScrollWorkaroundActive = false
     }
 
+    // ScrollView.inChild() ignores its direct child's translationY when it
+    // initializes a gesture. contentInsetTop is represented by translating
+    // that child, so the translated portion is visible but cannot start a
+    // scroll (the gap appears at the top once the ScrollView is inverted).
+    // Include the translated visual range only while dispatching ACTION_DOWN;
+    // subsequent events use the real bounds after ScrollView has initialized
+    // the gesture.
+    val translatedContentNeedsExpandedHitRange =
+      event.actionMasked == MotionEvent.ACTION_DOWN && appliedTopInsetPx > 0
+
     val handled =
-      if (paddingScrollWorkaroundActive) {
-        dispatchWithExpandedContentRange(scrollView, event)
-      } else {
-        super.dispatchTouchEvent(event)
+      when {
+        paddingScrollWorkaroundActive -> dispatchWithExpandedContentRange(scrollView, event)
+        translatedContentNeedsExpandedHitRange ->
+          dispatchWithTranslatedContentRange(scrollView, event)
+        else -> super.dispatchTouchEvent(event)
       }
 
     if (
@@ -52,6 +71,17 @@ class ClippingScrollViewDecoratorView(
     }
 
     return handled
+  }
+
+  override fun requestDisallowInterceptTouchEvent(disallowIntercept: Boolean) {
+    if (disallowIntercept && expansionTouchAction == MotionEvent.ACTION_MOVE) {
+      // ScrollView has taken the drag. Restore the bounds before onTouchEvent
+      // calculates its range, including on the first movement of a tiny range.
+      paddingScrollWorkaroundActive = false
+      expandedContentView?.bottom = contentBottomBeforeExpansion
+    }
+
+    super.requestDisallowInterceptTouchEvent(disallowIntercept)
   }
 
   fun setContentInsetBottom(value: Double) {
@@ -98,6 +128,8 @@ class ClippingScrollViewDecoratorView(
     }
 
     appliedTopInsetPx = newTopInsetPx
+
+    scrollView.syncContentInsetState(newTopInsetPx)
   }
 
   private fun shouldUsePaddingScrollWorkaround(
@@ -124,15 +156,41 @@ class ClippingScrollViewDecoratorView(
     val expandedBottom =
       max(originalBottom, scrollView.height + scrollView.scrollY + MIN_SCROLL_RANGE_PX)
 
+    return dispatchWithTemporaryContentBottom(contentView, event, expandedBottom)
+  }
+
+  private fun dispatchWithTranslatedContentRange(
+    scrollView: ViewGroup,
+    event: MotionEvent,
+  ): Boolean {
+    val contentView = scrollView.getChildAt(0)
+    val originalBottom = contentView?.bottom ?: 0
+    val translatedBottom = originalBottom + appliedTopInsetPx + MIN_SCROLL_RANGE_PX
+
+    return dispatchWithTemporaryContentBottom(contentView, event, translatedBottom)
+  }
+
+  private fun dispatchWithTemporaryContentBottom(
+    contentView: View?,
+    event: MotionEvent,
+    expandedBottom: Int,
+  ): Boolean {
+    val originalBottom = contentView?.bottom ?: 0
+
     if (contentView == null || expandedBottom == originalBottom) {
       return super.dispatchTouchEvent(event)
     }
 
     return try {
+      expandedContentView = contentView
+      contentBottomBeforeExpansion = originalBottom
+      expansionTouchAction = event.actionMasked
       contentView.bottom = expandedBottom
       super.dispatchTouchEvent(event)
     } finally {
       contentView.bottom = originalBottom
+      expandedContentView = null
+      expansionTouchAction = MotionEvent.ACTION_CANCEL
     }
   }
 

@@ -14,7 +14,6 @@ import Reanimated, {
   useSharedValue,
 } from "react-native-reanimated";
 
-import { KeyboardControllerNative } from "../../bindings";
 import {
   useFocusedInputHandler,
   useReanimatedFocusedInput,
@@ -138,29 +137,12 @@ const KeyboardAwareScrollView = forwardRef<
     const ghostViewSpace = useSharedValue(-1);
     const pendingSelectionForFocus = useSharedValue(false);
     const selectionUpdatedSinceHide = useSharedValue(false);
-    const scrollViewPageY = useSharedValue(0);
 
     const { height } = useWindowDimensions();
 
-    const syncScrollViewTarget = useCallback(async () => {
-      const handle = findNodeHandle(scrollViewAnimatedRef.current);
-
+    const syncScrollViewTarget = useCallback(() => {
       // eslint-disable-next-line react-compiler/react-compiler
-      scrollViewTarget.value = handle;
-
-      if (handle === null) {
-        return;
-      }
-
-      try {
-        const { y } = await KeyboardControllerNative.viewPositionInWindow(
-          handle,
-        );
-
-        scrollViewPageY.value = y;
-      } catch {
-        // ignore
-      }
+      scrollViewTarget.value = findNodeHandle(scrollViewAnimatedRef.current);
     }, []);
     const onScrollViewLayout = useCallback(
       (e: LayoutChangeEvent) => {
@@ -217,7 +199,9 @@ const KeyboardAwareScrollView = forwardRef<
           return interpolatedScrollTo;
         }
 
-        if (point < scrollViewPageY.value) {
+        const contentY = layout.value?.layout.contentY || 0;
+
+        if (contentY + inputHeight < scrollPosition.value) {
           const positionOnScreen = visibleRect - bottomOffset;
           const topOfScreen = scrollPosition.value + point;
 
@@ -246,7 +230,12 @@ const KeyboardAwareScrollView = forwardRef<
         // insets mode: `ScrollViewWithBottomPadding` extends scrollable area without
         // changing layout, so when the keyboard hides and we're at the end of the
         // ScrollView we must manually scroll back.
-        if (keyboardWillHide.value && ghostViewSpace.value > 0) {
+        if (
+          enabled &&
+          keyboardWillHide.value &&
+          keyboardHeight.value > 0 &&
+          ghostViewSpace.value > 0
+        ) {
           scrollTo(
             scrollViewAnimatedRef,
             0,
@@ -264,7 +253,7 @@ const KeyboardAwareScrollView = forwardRef<
 
         return false;
       },
-      [mode],
+      [enabled, mode],
     );
     const performScrollWithPositionRestoration = useCallback(
       (newPosition: number) => {
@@ -599,8 +588,9 @@ const KeyboardAwareScrollView = forwardRef<
     );
 
     const padding = useDerivedValue(
-      () => (enabled ? currentKeyboardFrameHeight.value : 0),
-      [enabled],
+      () =>
+        enabled && mode === "insets" ? currentKeyboardFrameHeight.value : 0,
+      [enabled, mode],
     );
     // layout mode only: a spacer view whose paddingBottom grows with the keyboard.
     // The `+ 1` ensures the scroll view never reaches its absolute end during animation,
@@ -614,20 +604,6 @@ const KeyboardAwareScrollView = forwardRef<
       [enabled, mode],
     );
 
-    if (mode === "layout") {
-      return (
-        <ScrollViewComponent
-          ref={onRef}
-          {...rest}
-          scrollEventThrottle={16}
-          onLayout={onScrollViewLayout}
-        >
-          {children}
-          {enabled && <Reanimated.View style={layoutSpacerStyle} />}
-        </ScrollViewComponent>
-      );
-    }
-
     return (
       <ScrollViewWithBottomPadding
         ref={onRef}
@@ -638,6 +614,9 @@ const KeyboardAwareScrollView = forwardRef<
         onLayout={onScrollViewLayout}
       >
         {children}
+        {enabled && mode === "layout" && (
+          <Reanimated.View style={layoutSpacerStyle} />
+        )}
       </ScrollViewWithBottomPadding>
     );
   },

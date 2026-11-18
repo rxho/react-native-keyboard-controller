@@ -5,6 +5,7 @@ on:
       - ".github/workflows/ios-e2e-test.yml"
       - "react-native-keyboard-controller.podspec"
       - "package.json"
+      - "yarn.lock"
       - "ios/**"
       - "example/**"
       - "e2e/**"
@@ -16,13 +17,14 @@ on:
       - ".github/workflows/ios-e2e-test.yml"
       - "react-native-keyboard-controller.podspec"
       - "package.json"
+      - "yarn.lock"
       - "ios/**"
       - "example/**"
       - "e2e/**"
       - "src/**"
 
 concurrency:
-  group: ios-e2e-${{ github.ref }}
+  group: ios-e2e-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
 jobs:
@@ -91,6 +93,14 @@ jobs:
           key: ${{ runner.os }}-xcode-${{ matrix.config.xcode }}-pods-${{ hashFiles('**/Podfile.lock') }}
           restore-keys: |
             ${{ runner.os }}-xcode-${{ matrix.config.xcode }}-pods-
+      - name: Restore DerivedData cache
+        # Restore before pod install so cached codegen files are regenerated.
+        uses: actions/cache@v5
+        with:
+          path: example/ios/build
+          key: ${{ runner.os }}-e2e-derived-data-xcode-${{ matrix.config.xcode }}-${{ hashFiles('**/Podfile.lock', '**/Gemfile.lock', '**/package.json', '**/yarn.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-e2e-derived-data-xcode-${{ matrix.config.xcode }}-
       - name: Install pods
         working-directory: ${{ env.WORKING_DIRECTORY }}/ios
         run: |
@@ -99,13 +109,6 @@ jobs:
           fi
         env:
           USE_CCACHE: "1"
-      - name: Restore DerivedData cache
-        uses: actions/cache@v5
-        with:
-          path: example/ios/build
-          key: ${{ runner.os }}-e2e-derived-data-xcode-${{ matrix.config.xcode }}-${{ hashFiles('**/Podfile.lock', '**/Gemfile.lock', '**/package.json', '**/yarn.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-e2e-derived-data-xcode-${{ matrix.config.xcode }}-
       - name: Build app
         working-directory: e2e
         run: yarn build-example:ios

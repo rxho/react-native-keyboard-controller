@@ -1,6 +1,6 @@
 {
   "name": "react-native-keyboard-controller",
-  "version": "1.22.7",
+  "version": "1.23.1",
   "description": "Keyboard manager which works in identical way on both iOS and Android",
   "main": "lib/commonjs/index",
   "module": "lib/module/index",
@@ -14,6 +14,7 @@
     "ios",
     "common",
     "cpp",
+    "Package.swift",
     "react-native-keyboard-controller.podspec",
     "react-native.config.js",
     "jest",
@@ -23,6 +24,7 @@
     "!android/build",
     "!android/src/test",
     "!android/.gradle",
+    "!android/.cxx",
     "!android/gradle",
     "!android/gradlew",
     "!android/gradlew.bat",
@@ -38,11 +40,12 @@
   ],
   "scripts": {
     "format": "prettier '**/*' --ignore-unknown --write",
+    "generate-ios-spm-header": "node scripts/generate-ios-spm-header.js",
     "test": "jest",
     "typescript": "tsc --noEmit --project tsconfig.build.json",
     "lint": "eslint --quiet \"**/*.{js,ts,tsx}\"",
     "lint-clang": "find ios/ -iname *.h -o -iname *.m -o -iname *.mm | grep -v -e Pods -e build | xargs clang-format -i -n --Werror",
-    "prepare": "bob build > /dev/null 2>&1",
+    "prepare": "bob build",
     "release": "release-it",
     "example": "yarn --cwd example",
     "pods": "yarn --cwd example bundle-install && yarn --cwd example pods",
@@ -180,6 +183,9 @@
         }
       ]
     ]
+  },
+  "swiftpmConfig": {
+    "name": "KeyboardController"
   },
   "codegenConfig": {
     "name": "RNKC",

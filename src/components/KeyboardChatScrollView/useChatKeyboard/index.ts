@@ -1,3 +1,4 @@
+import { useCallback } from "react";
 import { useSharedValue } from "react-native-reanimated";
 
 import { useKeyboardHandler } from "../../../hooks";
@@ -58,25 +59,25 @@ function useChatKeyboard(
     onLayout,
     onContentSizeChange,
   } = useScrollState(scrollViewRef);
-  const clampScrollIfNeeded = (
-    effective: number,
-    totalPaddingForMaxScroll?: number,
-  ) => {
-    "worklet";
+  const clampScrollIfNeeded = useCallback(
+    (effective: number, totalPaddingForMaxScroll?: number) => {
+      "worklet";
 
-    const paddingForMax =
-      totalPaddingForMaxScroll !== undefined
-        ? totalPaddingForMaxScroll
-        : effective;
-    const maxScroll = Math.max(
-      size.value.height - layout.value.height + paddingForMax,
-      0,
-    );
+      const paddingForMax =
+        totalPaddingForMaxScroll !== undefined
+          ? totalPaddingForMaxScroll
+          : effective;
+      const maxScroll = Math.max(
+        size.value.height - layout.value.height + paddingForMax,
+        0,
+      );
 
-    if (scroll.value > maxScroll) {
-      safeScrollTo(scrollViewRef, 0, maxScroll, false);
-    }
-  };
+      if (scroll.value > maxScroll) {
+        safeScrollTo(scrollViewRef, 0, maxScroll, false);
+      }
+    },
+    [scrollViewRef, scroll, layout, size],
+  );
 
   useKeyboardHandler(
     {
@@ -84,11 +85,17 @@ function useChatKeyboard(
         "worklet";
 
         if (freeze.value) {
+          if (!inverted) {
+            // The frozen transition doesn't shift the content, so the next
+            // one must not undo a shift (same sentinel as "whenAtEnd").
+            // eslint-disable-next-line react-compiler/react-compiler
+            offsetBeforeScroll.value = -1;
+          }
+
           return;
         }
 
         if (e.height > 0) {
-          // eslint-disable-next-line react-compiler/react-compiler
           targetKeyboardHeight.value = e.height;
           closing.value = false;
         } else {
@@ -356,6 +363,10 @@ function useChatKeyboard(
         // Record actual scroll displacement so close can be symmetric
         if (effective > 0 && offsetBeforeScroll.value !== -1) {
           actualOpenShift.value = scroll.value - offsetBeforeScroll.value;
+        } else if (effective === 0) {
+          // Fully closed: a later close event (Android sends one when a Modal
+          // gives the focus back) must not reuse the previous shift
+          actualOpenShift.value = 0;
         }
       },
     },

@@ -15,12 +15,16 @@ let noFocusedInputEvent: [String: Any] = [
   "layout": [
     "absoluteX": 0,
     "absoluteY": 0,
+    "contentX": 0,
+    "contentY": 0,
     "width": 0,
     "height": 0,
     "x": 0,
     "y": 0,
   ],
 ]
+
+let noFocusedInputSelectionEvent: [AnyHashable: Any] = [:]
 
 @objc(FocusedInputObserver)
 public class FocusedInputObserver: NSObject {
@@ -38,7 +42,8 @@ public class FocusedInputObserver: NSObject {
   private var currentInput: UIView?
   private var currentResponder: UIView?
   private var observation: NSKeyValueObservation?
-  private var lastEventDispatched: [AnyHashable: Any] = noFocusedInputEvent
+  private var lastLayoutEventDispatched: [AnyHashable: Any] = noFocusedInputEvent
+  private var lastSelectionEventDispatched: [AnyHashable: Any] = noFocusedInputSelectionEvent
 
   @objc public init(
     onLayoutChangedHandler: @escaping (NSDictionary) -> Void,
@@ -148,10 +153,8 @@ public class FocusedInputObserver: NSObject {
 
     setupObservers()
     // dispatch onSelectionChange on focus
-    if let textInput = responder as? UITextInput {
-      DispatchQueue.main.async {
-        updateSelectionPosition(textInput: textInput, sendEvent: self.onSelectionChange)
-      }
+    DispatchQueue.main.async {
+      self.syncUpSelection()
     }
 
     syncUpLayout()
@@ -172,7 +175,8 @@ public class FocusedInputObserver: NSObject {
     removeObservers(newResponder: nil)
     currentInput = nil
     currentResponder = nil
-    dispatchEventToJS(data: noFocusedInputEvent)
+    lastSelectionEventDispatched = noFocusedInputSelectionEvent
+    dispatchLayoutEventToJS(data: noFocusedInputEvent)
   }
 
   @objc public func syncUpLayout() {
@@ -182,12 +186,17 @@ public class FocusedInputObserver: NSObject {
 
     guard let frame = globalFrame, let input = focusedInput else { return }
 
+    let parentScrollView = responder.parentScrollView
+    let location = input.locationInScrollView(parentScrollView)
+
     let data: [String: Any] = [
       "target": responder.reactViewTag,
-      "parentScrollViewTarget": responder.parentScrollViewTarget,
+      "parentScrollViewTarget": parentScrollView.reactViewTag,
       "layout": [
         "absoluteX": frame.origin.x,
         "absoluteY": frame.origin.y,
+        "contentX": location.x,
+        "contentY": location.y,
         "width": input.frame.width,
         "height": input.frame.height,
         "x": input.frame.origin.x,
@@ -195,7 +204,12 @@ public class FocusedInputObserver: NSObject {
       ],
     ]
 
-    dispatchEventToJS(data: data)
+    dispatchLayoutEventToJS(data: data)
+  }
+
+  private func syncUpSelection() {
+    guard let textInput = currentResponder as? UITextInput else { return }
+    updateSelectionPosition(textInput: textInput, sendEvent: onSelectionChange)
   }
 
   private func onTextChanged(text: String?) {
@@ -206,13 +220,22 @@ public class FocusedInputObserver: NSObject {
     }
   }
 
-  private func dispatchEventToJS(data: [String: Any]) {
-    if NSDictionary(dictionary: data).isEqual(to: lastEventDispatched) {
+  private func dispatchLayoutEventToJS(data: [String: Any]) {
+    if NSDictionary(dictionary: data).isEqual(to: lastLayoutEventDispatched) {
       return
     }
 
-    lastEventDispatched = data
+    lastLayoutEventDispatched = data
     onLayoutChangedHandler(data as NSDictionary)
+  }
+
+  private func dispatchSelectionEventToJS(data: [String: Any]) {
+    if NSDictionary(dictionary: data).isEqual(to: lastSelectionEventDispatched) {
+      return
+    }
+
+    lastSelectionEventDispatched = data
+    onSelectionChangedHandler(data as NSDictionary)
   }
 
   private func setupObservers() {
@@ -255,18 +278,22 @@ public class FocusedInputObserver: NSObject {
         delegate.setTextFieldDelegate(delegate: textField.delegate, textField: textField)
         textField.setForceDelegate(delegate)
       }
-    } else if let textView = input as? UITextView {
-      if !(textView.delegate is KCTextInputCompositeDelegate) {
-        delegate.setTextViewDelegate(delegate: textView.delegate)
-        textView.setForceDelegate(delegate)
-      }
+    } else if let textView = input as? UITextView, !(textView.delegate is KCTextInputCompositeDelegate) {
+      delegate.setTextViewDelegate(delegate: textView.delegate)
+      textView.setForceDelegate(delegate)
     }
   }
 
   private func substituteDelegateBack(_ input: UIResponder?) {
-    if let textField = input as? UITextField, let oldDelegate = delegate.activeDelegate as? UITextFieldDelegate {
+    // substitution is deferred, so the input may lose focus before it gets our delegate;
+    // in this case `activeDelegate` belongs to another input and must not be assigned
+    if let textField = input as? UITextField, textField.delegate === delegate,
+       let oldDelegate = delegate.activeDelegate as? UITextFieldDelegate
+    {
       textField.setForceDelegate(oldDelegate)
-    } else if let textView = input as? UITextView, let oldDelegate = delegate.activeDelegate as? UITextViewDelegate {
+    } else if let textView = input as? UITextView, textView.delegate === delegate,
+              let oldDelegate = delegate.activeDelegate as? UITextViewDelegate
+    {
       textView.setForceDelegate(oldDelegate)
     }
   }
@@ -276,6 +303,11 @@ public class FocusedInputObserver: NSObject {
     // layout values
     DispatchQueue.main.async {
       self.syncUpLayout()
+
+      // iOS can report selection before the input resizes, leaving stale caret coordinates.
+      // Re-read selection after layout to dispatch updated coordinates even when
+      // the selection range has not changed.
+      self.syncUpSelection()
     }
   }
 
@@ -293,6 +325,6 @@ public class FocusedInputObserver: NSObject {
 
     let data = target.merging(eventDict) { _, new in new }
 
-    onSelectionChangedHandler(data as NSDictionary)
+    dispatchSelectionEventToJS(data: data)
   }
 }

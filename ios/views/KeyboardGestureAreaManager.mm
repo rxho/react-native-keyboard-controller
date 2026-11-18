@@ -7,11 +7,7 @@
 
 #import "KeyboardGestureAreaManager.h"
 
-#if __has_include("react_native_keyboard_controller-Swift.h")
-#import "react_native_keyboard_controller-Swift.h"
-#else
-#import <react_native_keyboard_controller/react_native_keyboard_controller-Swift.h>
-#endif
+#import "KeyboardControllerSwiftInterop.h"
 
 #ifdef RCT_NEW_ARCH_ENABLED
 #import <react/renderer/components/RNKC/EventEmitters.h>
@@ -19,7 +15,7 @@
 #import <react/renderer/components/RNKC/RCTComponentViewHelpers.h>
 #import <react/renderer/components/RNKC/RNKCKeyboardGestureAreaComponentDescriptor.h>
 
-#import "RCTFabricComponentsPlugins.h"
+#import <React/RCTFabricComponentsPlugins.h>
 #endif
 
 #import <UIKit/UIKit.h>
@@ -102,10 +98,19 @@ RCT_EXPORT_VIEW_PROPERTY(offset, NSNumber *)
 // MARK: lifecycle methods
 - (void)didMoveToSuperview
 {
+  if (_textInputNativeID == nil) {
+    return;
+  }
+
   if (self.superview == nil) {
     // unmounted
     [[KeyboardOffsetProvider shared] removeOffsetForTextInputNativeID:_textInputNativeID
-                                                              withTag:self.reactTag];
+                                                              withTag:self.reactNativeTag];
+  } else if (_offset != nil) {
+    // (re-)mounted, i.e. moved within the hierarchy without receiving new props
+    [[KeyboardOffsetProvider shared] setOffsetForTextInputNativeID:_textInputNativeID
+                                                            offset:_offset
+                                                           withTag:self.reactNativeTag];
   }
 }
 
@@ -122,7 +127,7 @@ RCT_EXPORT_VIEW_PROPERTY(offset, NSNumber *)
   NSString *oldTextInputNativeID = (oldViewPropsPtr && !oldViewPropsPtr->textInputNativeID.empty())
       ? [NSString stringWithUTF8String:oldViewPropsPtr->textInputNativeID.c_str()]
       : nil;
-  NSNumber *tag = [NSNumber numberWithInteger:self.tag];
+  NSNumber *tag = self.reactNativeTag;
   NSNumber *newOffset = @(newViewProps.offset);
 
   if (newTextInputNativeID != oldTextInputNativeID) {
@@ -145,6 +150,10 @@ RCT_EXPORT_VIEW_PROPERTY(offset, NSNumber *)
     }
   }
 
+  // keep ivars in sync, so `didMoveToSuperview` can clean up (or restore) the registration
+  _textInputNativeID = newTextInputNativeID;
+  _offset = newOffset;
+
   [super updateProps:props oldProps:oldProps];
 }
 #else
@@ -152,17 +161,17 @@ RCT_EXPORT_VIEW_PROPERTY(offset, NSNumber *)
 {
   [[KeyboardOffsetProvider shared] setOffsetForTextInputNativeID:_textInputNativeID
                                                           offset:offset
-                                                         withTag:self.reactTag];
+                                                         withTag:self.reactNativeTag];
   _offset = offset;
 }
 
 - (void)setTextInputNativeID:(NSString *)textInputNativeID
 {
   [[KeyboardOffsetProvider shared] removeOffsetForTextInputNativeID:_textInputNativeID
-                                                            withTag:self.reactTag];
+                                                            withTag:self.reactNativeTag];
   [[KeyboardOffsetProvider shared] setOffsetForTextInputNativeID:textInputNativeID
                                                           offset:_offset
-                                                         withTag:self.reactTag];
+                                                         withTag:self.reactNativeTag];
   _textInputNativeID = textInputNativeID;
 }
 #endif

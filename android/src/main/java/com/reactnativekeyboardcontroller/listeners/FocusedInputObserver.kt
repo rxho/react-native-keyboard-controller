@@ -1,9 +1,12 @@
 package com.reactnativekeyboardcontroller.listeners
 
+import android.annotation.SuppressLint
+import android.os.Build
 import android.text.TextWatcher
 import android.view.View
 import android.view.View.OnLayoutChangeListener
 import android.view.ViewTreeObserver.OnGlobalFocusChangeListener
+import android.view.ViewTreeObserver.OnWindowFocusChangeListener
 import android.widget.EditText
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.uimanager.ThemedReactContext
@@ -19,7 +22,9 @@ import com.reactnativekeyboardcontroller.extensions.addOnTextChangedListener
 import com.reactnativekeyboardcontroller.extensions.dispatchEvent
 import com.reactnativekeyboardcontroller.extensions.dp
 import com.reactnativekeyboardcontroller.extensions.emitEvent
-import com.reactnativekeyboardcontroller.extensions.parentScrollViewTarget
+import com.reactnativekeyboardcontroller.extensions.locationInScrollView
+import com.reactnativekeyboardcontroller.extensions.parentScrollView
+import com.reactnativekeyboardcontroller.extensions.reactViewTag
 import com.reactnativekeyboardcontroller.extensions.rootView
 import com.reactnativekeyboardcontroller.extensions.screenLocation
 import com.reactnativekeyboardcontroller.traversal.FocusedInputHolder
@@ -33,10 +38,13 @@ val noFocusedInputEvent =
     height = 0.0,
     absoluteX = 0.0,
     absoluteY = 0.0,
+    contentX = 0.0,
+    contentY = 0.0,
     target = -1,
     parentScrollViewTarget = -1,
   )
 
+@SuppressLint("ObsoleteSdkInt")
 class FocusedInputObserver(
   val view: View,
   private val eventPropagationView: ReactViewGroup,
@@ -47,7 +55,7 @@ class FocusedInputObserver(
 
   // state variables
   private var lastFocusedInput: EditText? = null
-  private var lastEventDispatched: FocusedInputLayoutChangedEventData = noFocusedInputEvent
+  private var lastLayoutEventDispatched: FocusedInputLayoutChangedEventData = noFocusedInputEvent
   private var textWatcher: TextWatcher? = null
   private var selectionSubscription: (() -> Unit)? = null
 
@@ -103,12 +111,12 @@ class FocusedInputObserver(
         stopObservingFocusedInput()
       }
       if (newFocus is EditText) {
+        FocusedInputHolder.set(newFocus)
         lastFocusedInput = newFocus
         newFocus.addOnLayoutChangeListener(layoutListener)
         this.syncUpLayout()
         textWatcher = newFocus.addOnTextChangedListener(textListener)
         selectionSubscription = newFocus.addOnSelectionChangedListener(selectionListener)
-        FocusedInputHolder.set(newFocus)
 
         val groupAncestor = ViewHierarchyNavigator.findGroupAncestor(newFocus)
         val allInputFields = ViewHierarchyNavigator.getAllInputFields(groupAncestor ?: context?.rootView)
@@ -124,18 +132,36 @@ class FocusedInputObserver(
       }
       // unfocused
       if (newFocus == null) {
-        dispatchEventToJS(noFocusedInputEvent)
+        dispatchLayoutEventToJS(noFocusedInputEvent)
+      }
+    }
+  private val windowFocusListener =
+    OnWindowFocusChangeListener { hasFocus ->
+      val input = view.findFocus()
+      // `focusListener` is not called when window gets its focus back (e.g. `Modal` was closed),
+      // so if another window has replaced the input, we need to restore the one focused in this window
+      if (hasFocus && input is EditText && input !== FocusedInputHolder.get()) {
+        // JS may hold a layout from another window, so the layout has to be dispatched again
+        lastLayoutEventDispatched = noFocusedInputEvent
+        focusListener.onGlobalFocusChanged(lastFocusedInput, input)
       }
     }
 
   init {
     view.viewTreeObserver.addOnGlobalFocusChangeListener(focusListener)
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2) {
+      view.viewTreeObserver.addOnWindowFocusChangeListener(windowFocusListener)
+    }
+    // input can be focused before we attach the listener (e.g. `autoFocus` inside `Modal`)
+    focusListener.onGlobalFocusChanged(null, view.findFocus())
   }
 
   fun syncUpLayout() {
-    val input = lastFocusedInput ?: return
+    val input = FocusedInputHolder.get()?.takeIf { it.isFocused } ?: return
 
     val (x, y) = input.screenLocation
+    val parentScrollView = input.parentScrollView
+    val (contentX, contentY) = input.locationInScrollView(parentScrollView)
     val event =
       FocusedInputLayoutChangedEventData(
         x = input.x.dp,
@@ -144,15 +170,20 @@ class FocusedInputObserver(
         height = input.height.toFloat().dp,
         absoluteX = x.toFloat().dp,
         absoluteY = y.toFloat().dp,
+        contentX = contentX.toFloat().dp,
+        contentY = contentY.toFloat().dp,
         target = input.id,
-        parentScrollViewTarget = input.parentScrollViewTarget,
+        parentScrollViewTarget = parentScrollView.reactViewTag,
       )
 
-    dispatchEventToJS(event)
+    dispatchLayoutEventToJS(event)
   }
 
   fun destroy() {
     view.viewTreeObserver.removeOnGlobalFocusChangeListener(focusListener)
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2) {
+      view.viewTreeObserver.removeOnWindowFocusChangeListener(windowFocusListener)
+    }
     stopObservingFocusedInput()
   }
 
@@ -176,9 +207,9 @@ class FocusedInputObserver(
     unsubscribeFromSelectionChanges?.invoke()
   }
 
-  private fun dispatchEventToJS(event: FocusedInputLayoutChangedEventData) {
-    if (event != lastEventDispatched) {
-      lastEventDispatched = event
+  private fun dispatchLayoutEventToJS(event: FocusedInputLayoutChangedEventData) {
+    if (event != lastLayoutEventDispatched) {
+      lastLayoutEventDispatched = event
       context.dispatchEvent(
         eventPropagationView.id,
         FocusedInputLayoutChangedEvent(

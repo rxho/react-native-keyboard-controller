@@ -16,11 +16,7 @@
 
 #import "KeyboardControllerModule-Header.h"
 
-#if __has_include("react_native_keyboard_controller-Swift.h")
-#import "react_native_keyboard_controller-Swift.h"
-#else
-#import <react_native_keyboard_controller/react_native_keyboard_controller-Swift.h>
-#endif
+#import "KeyboardControllerSwiftInterop.h"
 
 #import <React/RCTEventDispatcherProtocol.h>
 #ifndef RCT_NEW_ARCH_ENABLED
@@ -132,7 +128,7 @@ RCT_EXPORT_METHOD(viewPositionInWindow
                   : (RCTPromiseRejectBlock)reject)
 #endif
 {
-  dispatch_async(dispatch_get_main_queue(), ^{
+  dispatch_block_t measure = ^{
     UIView *view = nil;
 #ifdef RCT_NEW_ARCH_ENABLED
     NSInteger tag = (NSInteger)viewTag;
@@ -151,6 +147,17 @@ RCT_EXPORT_METHOD(viewPositionInWindow
       @"width" : @(frame.size.width),
       @"height" : @(frame.size.height),
     });
+  };
+  dispatch_async(dispatch_get_main_queue(), ^{
+#ifdef RCT_NEW_ARCH_ENABLED
+    // Layout events can precede Fabric mounting. Allow a display interval before the only lookup.
+    dispatch_after(
+        dispatch_time(DISPATCH_TIME_NOW, (int64_t)(UIUtils.nextFrame * NSEC_PER_SEC)),
+        dispatch_get_main_queue(),
+        measure);
+#else
+    measure();
+#endif
   });
 }
 

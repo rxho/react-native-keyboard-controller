@@ -16,6 +16,10 @@ on:
       - "ios/**"
       - "example/.ruby-version"
 
+concurrency:
+  group: verify-ios-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   swift-lint:
     runs-on: ubuntu-latest
@@ -29,7 +33,7 @@ jobs:
         env:
           WORKING_DIRECTORY: ios
   format:
-    runs-on: macOS-14
+    runs-on: macOS-15
     name: 📚 Swift Format
     defaults:
       run:
@@ -46,7 +50,7 @@ jobs:
       - name: Verify that the formatted code hasn't been changed
         run: git diff --exit-code HEAD
   objc-lint:
-    runs-on: macOS-14
+    runs-on: macOS-15
     name: 🔎 ObjC Lint
     steps:
       - uses: actions/checkout@v4

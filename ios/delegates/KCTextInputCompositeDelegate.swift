@@ -7,21 +7,31 @@
 
 import Foundation
 
+/// `caretRect(for:)` is in `textInputView`'s coordinates. For a `UITextField` that is its inner text area, which
+/// starts below the field's top padding, so the caret came out higher than it is. Android measures y from the
+/// field's top, and so does `KeyboardAwareScrollView` when it adds the caret to the input's layout.
+func caretYOffset(in textInput: UITextInput) -> CGFloat {
+  guard let textField = textInput as? UITextField else { return 0 }
+
+  return textField.textInputView.convert(CGPoint.zero, to: textField).y
+}
+
 func textSelection(in textInput: UITextInput) -> NSDictionary? {
   if let selectedRange = textInput.selectedTextRange {
     let caretRectStart = textInput.caretRect(for: selectedRange.start)
     let caretRectEnd = textInput.caretRect(for: selectedRange.end)
+    let yOffset = caretYOffset(in: textInput)
 
     return [
       "selection": [
         "start": [
           "x": caretRectStart.origin.x,
-          "y": caretRectStart.origin.y,
+          "y": caretRectStart.origin.y + yOffset,
           "position": textInput.offset(from: textInput.beginningOfDocument, to: selectedRange.start),
         ],
         "end": [
           "x": caretRectEnd.origin.x + caretRectEnd.size.width,
-          "y": caretRectEnd.origin.y + caretRectEnd.size.height,
+          "y": caretRectEnd.origin.y + caretRectEnd.size.height + yOffset,
           "position": textInput.offset(from: textInput.beginningOfDocument, to: selectedRange.end),
         ],
       ],
@@ -53,6 +63,8 @@ class KCTextInputCompositeDelegate: NSObject, UITextViewDelegate, UITextFieldDel
 
   /// Keep track of which textField we’re observing (iOS < 13 only)
   private weak var observedTextFieldForSelection: UITextField?
+
+  private var pendingSelectionUpdate = DispatchWorkItem {}
 
   init(
     onSelectionChange: @escaping (_ event: NSDictionary) -> Void,
@@ -88,11 +100,9 @@ class KCTextInputCompositeDelegate: NSObject, UITextViewDelegate, UITextFieldDel
     if #available(iOS 13.0, *) {
       // rely on textFieldDidChangeSelection
       observedTextFieldForSelection = nil
-    } else {
-      if let realTextField = textField {
-        addSelectionRangeObserver(to: realTextField)
-        observedTextFieldForSelection = realTextField
-      }
+    } else if let realTextField = textField {
+      addSelectionRangeObserver(to: realTextField)
+      observedTextFieldForSelection = realTextField
     }
   }
 
@@ -105,15 +115,19 @@ class KCTextInputCompositeDelegate: NSObject, UITextViewDelegate, UITextFieldDel
 
   func textViewDidChangeSelection(_ textView: UITextView) {
     textViewDelegate?.textViewDidChangeSelection?(textView)
-    if textView.canSelectionFitIntoLayout {
-      updateSelectionPosition(textInput: textView, sendEvent: onSelectionChange)
-    } else {
-      // when multiline input grows we need to wait for layout to be updated
-      // otherwise start/end positions will be incorrect (0/-1)
-      DispatchQueue.main.asyncAfter(deadline: .now() + UIUtils.nextFrame) {
-        updateSelectionPosition(textInput: textView, sendEvent: self.onSelectionChange)
-      }
+
+    // The selection is reported before UIKit lays out the edit, and asking the layout whether it is ready
+    // (`firstRect`) is what broke the split paragraph in #1593, so every read waits a frame; a growing
+    // input needs that frame anyway (#489). The delay also replaces the old `_comingFromJS` check: RN
+    // re-applying the text from JS moves the selection to the end and restores it within one call, and a
+    // read a frame later sees only the restored selection (#1148).
+    pendingSelectionUpdate.cancel()
+    pendingSelectionUpdate = DispatchWorkItem { [weak self, weak textView] in
+      guard let self = self, let textView = textView,
+            textView.isFirstResponder, textView.delegate === self else { return }
+      updateSelectionPosition(textInput: textView, sendEvent: self.onSelectionChange)
     }
+    DispatchQueue.main.asyncAfter(deadline: .now() + UIUtils.nextFrame, execute: pendingSelectionUpdate)
   }
 
   func textViewDidChange(_ textView: UITextView) {
